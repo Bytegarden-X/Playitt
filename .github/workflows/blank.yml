@@ -5,52 +5,59 @@ on:
 
 jobs:
   setup-rdp-tunnel:
-    runs-on: macos-13  # Bisa ganti ke macos-14 atau macos-latest untuk Sonoma
+    runs-on: macos-13  # Bisa ganti ke macos-14 atau macos-latest
 
     steps:
     - name: Check out the repository
-      uses: actions/checkout@v4  # Menggunakan versi terbaru untuk keamanan
+      uses: actions/checkout@v4
 
-    - name: Install Homebrew and xrdp
+    - name: Install Homebrew and Dependencies
       run: |
         # Instal Homebrew
         /bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/Homebrew/install/HEAD/install.sh)"
         # Tambahkan Homebrew ke PATH
-        echo 'eval "$(/opt/homebrew/bin/brew shellenv)"' >> ~/.zprofile
-        eval "$(/opt/homebrew/bin/brew shellenv)"
-        # Instal xrdp dan XQuartz (diperlukan untuk display server)
-        brew install xrdp
+        echo 'eval "$(/usr/local/bin/brew shellenv)"' >> ~/.zprofile
+        eval "$(/usr/local/bin/brew shellenv)"
+        # Instal dependensi untuk xrdp
+        brew install autoconf automake libtool pkg-config libx11 libxrandr libpng openssl
         brew install --cask xquartz
         # Jalankan XQuartz
         open -a XQuartz &
+
+    - name: Install xrdp from Source
+      run: |
+        # Unduh dan kompilasi xrdp
+        git clone https://github.com/neutrinolabs/xrdp.git
+        cd xrdp
+        ./bootstrap
+        ./configure --prefix=/usr/local
+        make
+        sudo make install
+        # Jalankan xrdp dan xrdp-sesman
+        sudo /usr/local/sbin/xrdp
+        sudo /usr/local/sbin/xrdp-sesman
+        # Set password untuk user 'admin'
+        echo "admin:${{ secrets.RUNNER_PASSWORD }}" | sudo chpasswd
+        # Buka port 3389 di firewall
+        sudo /usr/libexec/ApplicationFirewall/socketfilterfw --add /usr/local/sbin/xrdp
+        sudo /usr/libexec/ApplicationFirewall/socketfilterfw --unblockapp /usr/local/sbin/xrdp
 
     - name: Download and Install Playit
       run: |
         curl -L -o ~/playit https://github.com/playit-cloud/playit-agent/releases/download/v0.15.26/playit-macos-universal
         chmod +x ~/playit
-        sleep 5  # Jeda untuk memastikan download selesai
-
-    - name: Configure xrdp
-      run: |
-        # Jalankan xrdp dan xrdp-sesman
-        sudo xrdp
-        sudo xrdp-sesman
-        # Set password untuk user 'admin' dari GitHub Secrets
-        echo "admin:${{ secrets.RUNNER_PASSWORD }}" | sudo chpasswd
-        # Buka port 3389 di firewall
-        sudo /usr/libexec/ApplicationFirewall/socketfilterfw --add /opt/homebrew/bin/xrdp
-        sudo /usr/libexec/ApplicationFirewall/socketfilterfw --unblockapp /opt/homebrew/bin/xrdp
+        sleep 5
 
     - name: Optimize macOS for RDP
       run: |
         # Nonaktifkan layanan yang tidak perlu
-        sudo launchctl unload -w /System/Library/LaunchDaemons/com.apple.metadata.mds.plist  # Spotlight
-        sudo launchctl unload -w /System/Library/LaunchDaemons/com.apple.xpc.launchd.oneshot.plist  # Background tasks
+        sudo launchctl unload -w /System/Library/LaunchDaemons/com.apple.metadata.mds.plist
+        sudo launchctl unload -w /System/Library/LaunchDaemons/com.apple.xpc.launchd.oneshot.plist
         # Set energi ke performa tinggi
         sudo pmset -a lowpowermode 0
         sudo pmset -a displaysleep 0
         # Nonaktifkan efek visual
-        defaults write -g NSAutomaticWindowAnimationsEnabled -bool2
+        defaults write -g NSAutomaticWindowAnimationsEnabled -bool false
         # Optimasi jaringan
         sudo sysctl -w net.inet.tcp.msl=30000
 
@@ -58,9 +65,8 @@ jobs:
       env:
         PLAYIT_AUTH_KEY: ${{ secrets.PL }}
       run: |
-        # Jalankan Playit untuk tunnel port 3389
         nohup ~/playit --secret $PLAYIT_AUTH_KEY --tunnel add tcp remote-port 3389 local-addr 127.0.0.1:3389 &
-        sleep 10  # Tunggu tunnel aktif
+        sleep 10
 
     - name: Keep the GitHub Action Runner Alive
-      run: sleep 21600  # 6 jam untuk menjaga runner aktif
+      run: sleep 21600
