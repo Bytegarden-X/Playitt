@@ -1,78 +1,64 @@
-name: Playit RDP Tunnel (macOS)
+name: Playit RDP Tunnel
 
 on:
   workflow_dispatch:
 
 jobs:
   setup-rdp-tunnel:
-    runs-on: macos-13  # Bisa ganti ke macos-14 atau macos-latest
+    runs-on: windows-2022
 
     steps:
     - name: Check out the repository
-      uses: actions/checkout@v4
-
-    - name: Install Homebrew and Dependencies
-      run: |
-        # Instal Homebrew
-        /bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/Homebrew/install/HEAD/install.sh)"
-        # Tambahkan Homebrew ke PATH
-        echo 'eval "$(/usr/local/bin/brew shellenv)"' >> ~/.zprofile
-        eval "$(/usr/local/bin/brew shellenv)"
-        # Instal dependensi untuk xrdp
-        brew install autoconf automake libtool pkg-config libx11 libxrandr libpng openssl libxfixes xorgproto
-        brew install --cask xquartz
-        # Jalankan XQuartz
-        open -a XQuartz &
-        # Tunggu XQuartz aktif
-        sleep 10
-        # Atur variabel lingkungan untuk X11
-        export PKG_CONFIG_PATH="/usr/local/lib/pkgconfig:/opt/X11/lib/pkgconfig:$PKG_CONFIG_PATH"
-        export CFLAGS="-I/usr/local/include -I/opt/X11/include"
-        export LDFLAGS="-L/usr/local/lib -L/opt/X11/lib"
-
-    - name: Install xrdp from Source
-      run: |
-        # Unduh dan kompilasi xrdp
-        git clone https://github.com/neutrinolabs/xrdp.git
-        cd xrdp
-        ./bootstrap
-        ./configure --prefix=/usr/local
-        make
-        sudo make install
-        # Jalankan xrdp dan xrdp-sesman
-        sudo /usr/local/sbin/xrdp
-        sudo /usr/local/sbin/xrdp-sesman
-        # Set password untuk user 'admin'
-        echo "admin:${{ secrets.RUNNER_PASSWORD }}" | sudo chpasswd
-        # Buka port 3389 di firewall
-        sudo /usr/libexec/ApplicationFirewall/socketfilterfw --add /usr/local/sbin/xrdp
-        sudo /usr/libexec/ApplicationFirewall/socketfilterfw --unblockapp /usr/local/sbin/xrdp
+      uses: actions/checkout@v2
 
     - name: Download and Install Playit
       run: |
-        curl -L -o ~/playit https://github.com/playit-cloud/playit-agent/releases/download/v0.15.26/playit-macos-universal
-        chmod +x ~/playit
-        sleep 5
+        Invoke-WebRequest -Uri "https://github.com/playit-cloud/playit-agent/releases/download/v0.15.26/playit-windows-x86_64-signed.exe" -OutFile "$env:USERPROFILE\playit.exe"
+        Start-Sleep -Seconds 5  # Give some time for the download to complete
 
-    - name: Optimize macOS for RDP
+        
+    # Default, optional.
+    - name: Enable TS
+      run: Set-ItemProperty -Path 'HKLM:\System\CurrentControlSet\Control\Terminal Server'-name "fDenyTSConnections" -Value 0
+    - run: Enable-NetFirewallRule -DisplayGroup "Remote Desktop"
+    - run: Set-ItemProperty -Path 'HKLM:\System\CurrentControlSet\Control\Terminal Server\WinStations\RDP-Tcp' -name "UserAuthentication" -Value 1
+    - run: Set-ItemProperty -Path 'HKLM:\System\CurrentControlSet\Control\Terminal Server\WinStations\RDP-Tcp' -name "MinEncryptionLevel" -Value 3
+    - run: Set-LocalUser -Name "runneradmin" -Password (ConvertTo-SecureString -AsPlainText "p@ssw0rd!" -Force)
+
+    - name: Optimize Server for RDP
       run: |
-        # Nonaktifkan layanan yang tidak perlu
-        sudo launchctl unload -w /System/Library/LaunchDaemons/com.apple.metadata.mds.plist
-        sudo launchctl unload -w /System/Library/LaunchDaemons/com.apple.xpc.launchd.oneshot.plist
-        # Set energi ke performa tinggi
-        sudo pmset -a lowpowermode 0
-        sudo pmset -a displaysleep 0
-        # Nonaktifkan efek visual
-        defaults write -g NSAutomaticWindowAnimationsEnabled -bool false
-        # Optimasi jaringan
-        sudo sysctl -w net.inet.tcp.msl=30000
+        # Disable unnecessary services for better performance
+        Set-Service -Name 'WSearch' -StartupType Disabled -ErrorAction SilentlyContinue; Stop-Service -Name 'WSearch' -Force -ErrorAction SilentlyContinue
+        Set-Service -Name 'SysMain' -StartupType Disabled -ErrorAction SilentlyContinue; Stop-Service -Name 'SysMain' -Force -ErrorAction SilentlyContinue
+        Set-Service -Name 'DiagTrack' -StartupType Disabled -ErrorAction SilentlyContinue; Stop-Service -Name 'DiagTrack' -Force -ErrorAction SilentlyContinue
+        Set-Service -Name 'dmwappushservice' -StartupType Disabled -ErrorAction SilentlyContinue; Stop-Service -Name 'dmwappushservice' -Force -ErrorAction SilentlyContinue
+        Set-Service -Name 'RetailDemo' -StartupType Disabled -ErrorAction SilentlyContinue; Stop-Service -Name 'RetailDemo' -Force -ErrorAction SilentlyContinue
+        Set-Service -Name 'Fax' -StartupType Disabled -ErrorAction SilentlyContinue; Stop-Service -Name 'Fax' -Force -ErrorAction SilentlyContinue
+        Set-Service -Name 'wuauserv' -StartupType Disabled -ErrorAction SilentlyContinue; Stop-Service -Name 'wuauserv' -Force -ErrorAction SilentlyContinue
+        Set-Service -Name 'BITS' -StartupType Disabled -ErrorAction SilentlyContinue; Stop-Service -Name 'BITS' -Force -ErrorAction SilentlyContinue
+        Set-Service -Name 'Spooler' -StartupType Disabled -ErrorAction SilentlyContinue; Stop-Service -Name 'Spooler' -Force -ErrorAction SilentlyContinue
+        # Disable visual effects to reduce graphical load
+        Set-ItemProperty -Path 'HKLM:\Software\Microsoft\Windows\CurrentVersion\Explorer\VisualEffects' -Name 'VisualFXSetting' -Value 2
+        Set-ItemProperty -Path 'HKCU:\Control Panel\Desktop' -Name 'UserPreferencesMask' -Value ([byte[]](0x90,0x12,0x03,0x80,0x10,0x00,0x00,0x00))
+        # Optimize network settings for RDP
+        Set-ItemProperty -Path 'HKLM:\SYSTEM\CurrentControlSet\Services\Tcpip\Parameters' -Name 'MaxUserPort' -Value 65534
+        Set-ItemProperty -Path 'HKLM:\SYSTEM\CurrentControlSet\Services\Tcpip\Parameters' -Name 'TcpTimedWaitDelay' -Value 30
+        # Reduce CPU usage by adjusting process priority and disabling background tasks
+        Set-ItemProperty -Path 'HKLM:\SYSTEM\CurrentControlSet\Control\PriorityControl' -Name 'Win32PrioritySeparation' -Value 0x26
+        # Disable Windows Defender real-time protection to reduce CPU load (optional, based on security needs)
+        Set-MpPreference -DisableRealtimeMonitoring $true -ErrorAction SilentlyContinue
+        # Set power plan to High Performance
+        powercfg /setactive SCHEME_MIN
 
     - name: Start Playit and Set Up RDP Tunnel
       env:
-        PLAYIT_AUTH_KEY: ${{ secrets.PL }}
+        PLAYIT_AUTH_KEY: ${{ secrets.PL }} 
       run: |
-        nohup ~/playit --secret $PLAYIT_AUTH_KEY --tunnel add tcp remote-port 3389 local-addr 127.0.0.1:3389 &
-        sleep 10
+        Start-Process -FilePath "$env:USERPROFILE\playit.exe" -ArgumentList "--secret $env:PLAYIT_AUTH_KEY" -NoNewWindow -Wait
+        Start-Process -FilePath "$env:USERPROFILE\playit.exe" -NoNewWindow
 
+        
+    # Prevent workflow to stop
     - name: Keep the GitHub Action Runner Alive
-      run: sleep 21600
+      run: |
+        Start-Sleep -Seconds 21600  # Increased to 6 hours for public repo with no minute limit
